@@ -1,28 +1,41 @@
 #include <pcap.h>
 #include <stdio.h>
+#include <arpa/inet.h>
 #include <netinet/ip.h>
-#include <netinet/udp.h>
 #include <netinet/tcp.h>
+#include <netinet/udp.h>
+#include <netinet/ip_icmp.h>
 
 void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
-    // Define pointers to packet headers
-    struct ip *ip_header = (struct ip *)(packet + 14);  // Skip the Ethernet header (usually 14 bytes)
 
-    // Determine the protocol and print the type of packet
-    switch (ip_header->ip_p) {
-        case IPPROTO_ICMP:
-            printf("Got packet - ICMP\n");
-            break;
-        case IPPROTO_TCP:
-            printf("Got packet - TCP\n");
-            break;
-        case IPPROTO_UDP:
-            printf("Got packet - UDP\n");
-            break;
-        default:
-            printf("Got packet - Other\n");
-            break;
+    struct ip *ip_header = (struct ip*)(packet + 14); // Skip Ethernet header (14 bytes)
+
+    // Print IP addresses
+    char src_ip[INET_ADDRSTRLEN];
+    char dst_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(ip_header->ip_src), src_ip, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &(ip_header->ip_dst), dst_ip, INET_ADDRSTRLEN);
+    printf("Source IP: %s\n", src_ip);
+    printf("Destination IP: %s\n", dst_ip);
+
+    // Check IP protocol and extract port numbers if TCP or UDP
+    if (ip_header->ip_p == IPPROTO_TCP) {
+        struct tcphdr *tcp_header = (struct tcphdr*)(packet + 14 + (ip_header->ip_hl * 4));
+        printf("Protocol: TCP\n");
+        printf("Source Port: %d\n", ntohs(tcp_header->source));
+        printf("Destination Port: %d\n", ntohs(tcp_header->dest));
+    } else if (ip_header->ip_p == IPPROTO_UDP) {
+        struct udphdr *udp_header = (struct udphdr*)(packet + 14 + (ip_header->ip_hl * 4));
+        printf("Protocol: UDP\n");
+        printf("Source Port: %d\n", ntohs(udp_header->source));
+        printf("Destination Port: %d\n", ntohs(udp_header->dest));
+    } else if (ip_header->ip_p == IPPROTO_ICMP) {
+        printf("Protocol: ICMP\n");
+    } else {
+        printf("Protocol: Other\n");
     }
+
+    printf("\n");
 }
 
 int main() {
