@@ -23,18 +23,20 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     char buffer[6];
     if (ip_header->ip_p == IPPROTO_TCP) {
         strcpy(buffer, "TCP");
+        struct tcphdr *tcp_header = (struct tcphdr*)(packet + 14 + (ip_header->ip_hl * 4));
+        mvwprintw(win, line_count, 0, "%-20s %d %-20s %-10s", src_ip, ntohs(tcp_header->source), dst_ip, buffer);
         // You can add port extraction logic here
     } else if (ip_header->ip_p == IPPROTO_UDP) {
         strcpy(buffer, "UDP");
+        struct udphdr *udp_header = (struct udphdr*)(packet + 14 + (ip_header->ip_hl * 4));
+        mvwprintw(win, line_count, 0, "%-20s %d %-20s %-10s", src_ip,ntohs(udp_header->source), dst_ip, buffer);
         // You can add port extraction logic here
     } else if (ip_header->ip_p == IPPROTO_ICMP) {
         strcpy(buffer, "ICMP");
+        mvwprintw(win, line_count, 0, "%-20s %d %-20s %-10s", src_ip,"", dst_ip, buffer);
     } else {
         strcpy(buffer, "Other");
     }
-
-    // Print packet information to the window
-    mvwprintw(win, line_count, 0, "%-15s %-15s %-5s", src_ip, dst_ip, buffer);
     
     // Increment line count
     line_count++;
@@ -82,7 +84,7 @@ int main() {
     refresh();
     wrefresh(win);
 
-    mvwprintw(win, 0, 0, "Src IP          Dst IP          Proto");
+    mvwprintw(win, 0, 0, "%-20s %-20s %-10s %-10s %-10s", "Src IP", "Dst IP", "Proto", "Rx", "Tx");
     wrefresh(win); // Refresh to show the header line
 
     pcap_loop(handle, -1, got_packet, NULL);
