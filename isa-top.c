@@ -90,7 +90,7 @@ void got_packet(__attribute__((unused)) u_char *args, const struct pcap_pkthdr *
     }
 }
 
-void display_stats(int sort_option) {
+void display_stats(int sort_option, char rx_display_option) {
     clear();
     mvprintw(0, 0, "%-30s %-30s %-10s %-20s %-20s", "Src IP:port", "Dst IP:port", "Proto", "Rx", "Tx");
     
@@ -112,7 +112,14 @@ void display_stats(int sort_option) {
     // Display the top 10 connections
     for (int i = 0; i < entry_count && i < 10; i++) {
         char rx_human[20], tx_human[20];
-        snprintf(rx_human, sizeof(rx_human), "%lld", stats[i].rx_bytes);
+        if (rx_display_option == 'k') {
+            // Display in KB/s
+            snprintf(rx_human, sizeof(rx_human), "%.2f KB/s", (stats[i].rx_bytes / 1024.0)); 
+        } else {
+            // Display in packets/s
+            snprintf(rx_human, sizeof(rx_human), "%d packets/s", stats[i].rx_packets); 
+        }
+        
         snprintf(tx_human, sizeof(tx_human), "%lld", stats[i].tx_bytes);
         
         char src_combined[INET_ADDRSTRLEN + 6]; // Sufficient size for IP:port
@@ -129,23 +136,25 @@ void display_stats(int sort_option) {
     refresh();
 }
 
-
 int main(int argc, char *argv[]) {
-    pcap_t *handle; // Deklaruje ukazovateľ handle typu pcap_t, ktorý bude odkazovať na otvorenú reláciu na zachytávanie paketov
-    char errbuf[PCAP_ERRBUF_SIZE]; // Vytvára buffer errbuf na ukladanie chybových správ od funkcií knižnice libpcap
-    struct bpf_program fp; // Deklaruje fp, čo je štruktúra typu bpf_program. Táto štruktúra bude obsahovať filtrovaný výraz vo formáte BPF (Berkeley Packet Filter), ktorý sa použije na filtrovanie zachytávaných paketov.
-    char filter_exp[] = "ip proto \\icmp or ip proto \\tcp or ip proto \\udp"; // Filter hovorí, že má zachytávať iba pakety s protokolom ICMP, TCP alebo UDP
-    bpf_u_int32 net = 0; // Deklaruje premennú net typu bpf_u_int32, ktorá bude obsahovať IP adresu siete. Táto hodnota sa nepoužíva v kóde, ale je potrebná pre kompatibilitu s funkciami knižnice libpcap
+    pcap_t *handle;
+    char errbuf[PCAP_ERRBUF_SIZE];
+    struct bpf_program fp;
+    char filter_exp[] = "ip proto \\icmp or ip proto \\tcp or ip proto \\udp";
+    bpf_u_int32 net = 0;
 
     // Parse command-line arguments
     char *interface = NULL;
     char sort_option = 'b'; // Default sort by bytes
+    char rx_display_option = 'k'; // Default display in KB/s
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
             interface = argv[++i];
         } else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
             sort_option = argv[++i][0]; // Use first char of sorting option
+        } else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
+            rx_display_option = argv[++i][0]; // Use first char of Rx display option
         }
     }
 
@@ -154,46 +163,35 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /*Otvorí reláciu na zachytávanie paketov na zadanom rozhraní interface pomocou pcap_open_live.
-        - BUFSIZ určuje maximálnu veľkosť paketov, ktoré sa majú zachytávať.
-        - 1 znamená, že zachytí aj pakety, ktoré sú cielené na iné zariadenia (promiskuitný režim).
-        - 1000 je časový limit v milisekundách, po ktorom sa načítajú dostupné pakety.
-        - errbuf obsahuje chybové správy v prípade neúspešného otvorenia.*/
     handle = pcap_open_live(interface, BUFSIZ, 1, 1000, errbuf);
     if (handle == NULL) {
         fprintf(stderr, "Could not open device: %s\n", errbuf);
         return 2;
     }
 
-    // Pokúsi sa skompilovať filter definovaný v filter_exp do pseudo-kódu BPF pomocou pcap_compile. Ak sa to nepodarí, vypíše chybu a program sa skončí.
     if (pcap_compile(handle, &fp, filter_exp, 0, net) == -1) {
         fprintf(stderr, "Could not parse filter %s: %s\n", filter_exp, pcap_geterr(handle));
         return 2;
     }
-    // Nastaví skompilovaný filter fp na handle pomocou pcap_setfilter. Ak nastavenie zlyhá, vypíše chybové hlásenie a program sa skončí.
     if (pcap_setfilter(handle, &fp) == -1) {
         fprintf(stderr, "Could not install filter %s: %s\n", filter_exp, pcap_geterr(handle));
         return 2;
     }
 
-    // Step 3: Initialize ncurses and display header
+    // Initialize ncurses and display header
     initscr();
     noecho();
-    cbreak(); // Disable line buffering
+    cbreak();
     refresh();
     
-    /* Spustí nekonečný cyklus, kde sa neustále zachytáva a spracúva 10 paketov súčasne pomocou pcap_loop.
-        Funkcia got_packet bude zavolaná pre každý zachytený paket.*/
     while (1) {
         pcap_loop(handle, 10, got_packet, NULL); // Process 10 packets at a time
-        
-        // Display updated stats
-        display_stats(sort_option);
-        
+        display_stats(sort_option, rx_display_option);
         sleep(1); // Update every second
     }
 
-    endwin();
-    pcap_close(handle); // Close the handle
+    pcap_freecode(&fp);
+    pcap_close(handle);
+    endwin(); // End ncurses mode
     return 0;
 }
