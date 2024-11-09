@@ -90,16 +90,18 @@ void got_packet(__attribute__((unused)) u_char *args, const struct pcap_pkthdr *
     }
 }
 
-void display_stats(int sort_option, char rx_display_option) {
+void display_stats(int sort_option) {
     clear();
     mvprintw(0, 0, "%-30s %-30s %-10s %-20s %-20s", "Src IP:port", "Dst IP:port", "Proto", "Rx", "Tx");
+    mvprintw(1, 0, "%-70s %-10s %-10s %-10s %-10s","", "b/s", "p/s", "b/s", "p/s");
+    
     
     // Sort based on sort_option
     for (int i = 0; i < entry_count - 1; i++) {
         for (int j = i + 1; j < entry_count; j++) {
             int swap = 0;
-            if (sort_option == 'b' && stats[i].rx_bytes < stats[j].rx_bytes) swap = 1; // Sort by bytes
-            if (sort_option == 'p' && stats[i].rx_packets < stats[j].rx_packets) swap = 1; // Sort by packets
+            if (sort_option == 1 && stats[i].rx_bytes < stats[j].rx_bytes) swap = 1; // Sort by bytes
+            if (sort_option == 2 && stats[i].rx_packets < stats[j].rx_packets) swap = 1; // Sort by packets
             
             if (swap) {
                 ConnectionStats temp = stats[i];
@@ -111,16 +113,31 @@ void display_stats(int sort_option, char rx_display_option) {
 
     // Display the top 10 connections
     for (int i = 0; i < entry_count && i < 10; i++) {
-        char rx_human[20], tx_human[20];
-        if (rx_display_option == 'k') {
-            // Display in KB/s
-            snprintf(rx_human, sizeof(rx_human), "%.2f KB/s", (stats[i].rx_bytes / 1024.0)); 
-        } else {
-            // Display in packets/s
-            snprintf(rx_human, sizeof(rx_human), "%d packets/s", stats[i].rx_packets); 
-        }
+        char rx_human_packet[10], tx_human_packet[10], rx_human_byte[10], tx_human_byte[10];
+        if (stats[i].rx_bytes > 1000000){
+            snprintf(rx_human_byte, sizeof(rx_human_byte), "%.1lfM", stats[i].rx_bytes/1000000.0); 
         
-        snprintf(tx_human, sizeof(tx_human), "%lld", stats[i].tx_bytes);
+            snprintf(tx_human_byte, sizeof(tx_human_byte), "%.1lfM", stats[i].tx_bytes/1000000.0);
+        } else if (stats[i].rx_bytes > 1000){
+            snprintf(rx_human_byte, sizeof(rx_human_byte), "%.1lfk", stats[i].rx_bytes/1000.0); 
+        
+            snprintf(tx_human_byte, sizeof(tx_human_byte), "%.1lfk", stats[i].tx_bytes/1000.0);
+        } else {
+            snprintf(rx_human_byte, sizeof(rx_human_byte), "%lld", stats[i].rx_bytes); 
+        
+            snprintf(tx_human_byte, sizeof(tx_human_byte), "%lld", stats[i].tx_bytes);
+        
+        }
+
+        if (stats[i].rx_packets > 1000){
+            snprintf(rx_human_packet, sizeof(rx_human_packet), "%.1fk", stats[i].rx_packets/1000.0); 
+        
+            snprintf(tx_human_packet, sizeof(tx_human_packet), "%.1fk", stats[i].tx_packets/1000);
+        } else {
+            snprintf(rx_human_packet, sizeof(rx_human_packet), "%d", stats[i].rx_packets); 
+        
+            snprintf(tx_human_packet, sizeof(tx_human_packet), "%d", stats[i].tx_packets);
+        }
         
         char src_combined[INET_ADDRSTRLEN + 6]; // Sufficient size for IP:port
         char dst_combined[INET_ADDRSTRLEN + 6];
@@ -130,7 +147,7 @@ void display_stats(int sort_option, char rx_display_option) {
         snprintf(dst_combined, sizeof(dst_combined), "%s:%d", stats[i].dst_ip, stats[i].dst_port);
 
         // Formatted output
-        mvprintw(i + 1, 0, "%-30s %-30s %-10s %-20s %-20s", src_combined, dst_combined, stats[i].protocol, rx_human, tx_human);
+        mvprintw(i + 2, 0, "%-30s %-30s %-10s %-10s %-10s %-10s %-10s", src_combined, dst_combined, stats[i].protocol, rx_human_byte, rx_human_packet, tx_human_byte, tx_human_packet);
     }
     
     refresh();
@@ -145,16 +162,15 @@ int main(int argc, char *argv[]) {
 
     // Parse command-line arguments
     char *interface = NULL;
-    char sort_option = 'b'; // Default sort by bytes
-    char rx_display_option = 'k'; // Default display in KB/s
+    int sort_option = 1; // Default sort by bytes
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
             interface = argv[++i];
         } else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
-            sort_option = argv[++i][0]; // Use first char of sorting option
-        } else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
-            rx_display_option = argv[++i][0]; // Use first char of Rx display option
+            if(strcmp(argv[i+1], "p") == 0){
+                sort_option = 2;
+            }
         }
     }
 
@@ -186,8 +202,14 @@ int main(int argc, char *argv[]) {
     
     while (1) {
         pcap_loop(handle, 10, got_packet, NULL); // Process 10 packets at a time
-        display_stats(sort_option, rx_display_option);
+        display_stats(sort_option);
         sleep(1); // Update every second
+        for (int i = 0; i < entry_count; i++){
+            stats[i].rx_bytes = 0;
+            stats[i].tx_bytes = 0;
+            stats[i].rx_packets = 0;
+            stats[i].tx_packets = 0;
+        }
     }
 
     pcap_freecode(&fp);
