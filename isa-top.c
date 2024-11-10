@@ -224,10 +224,7 @@ int main(int argc, char *argv[]) {
     cbreak();
     refresh();
     
-    while (1) {
-        pcap_loop(handle, 0, got_packet, NULL); // Process packets
-       
-    }
+    pcap_loop(handle, 0, got_packet, NULL); // Process packets
 
     pcap_freecode(&fp);
     pcap_close(handle);
