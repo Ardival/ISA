@@ -28,30 +28,30 @@ ConnectionStats stats[MAX_ENTRIES];
 int entry_count = 0;
 
 // Function to find or add a connection
-int find_or_add_connection(const char *src_ip, int src_port, const char *dst_ip, int dst_port, const char *protocol) {
-    for (int i = 0; i < entry_count; i++) {
-        if (strcmp(stats[i].src_ip, src_ip) == 0 && stats[i].src_port == src_port &&
-            strcmp(stats[i].dst_ip, dst_ip) == 0 && stats[i].dst_port == dst_port) {
-            return i; // Return the index of the existing entry
-        }
-    }
+// int find_or_add_connection(const char *src_ip, int src_port, const char *dst_ip, int dst_port, const char *protocol) {
+//     for (int i = 0; i < entry_count; i++) {
+//         if (strcmp(stats[i].src_ip, src_ip) == 0 && stats[i].src_port == src_port &&
+//             strcmp(stats[i].dst_ip, dst_ip) == 0 && stats[i].dst_port == dst_port) {
+//             return i; // Return the index of the existing entry
+//         }
+//     }
     
-    // If not found, add new entry
-    if (entry_count < MAX_ENTRIES) {
-        strcpy(stats[entry_count].src_ip, src_ip);
-        strcpy(stats[entry_count].dst_ip, dst_ip);
-        stats[entry_count].src_port = src_port;
-        stats[entry_count].dst_port = dst_port;
-        strcpy(stats[entry_count].protocol, protocol);
-        stats[entry_count].rx_bytes = 0;
-        stats[entry_count].tx_bytes = 0;
-        stats[entry_count].rx_packets = 0;
-        stats[entry_count].tx_packets = 0;
-        return entry_count++; // Return the index of the new entry
-    }
+//     // If not found, add new entry
+//     if (entry_count < MAX_ENTRIES) {
+//         strcpy(stats[entry_count].src_ip, src_ip);
+//         strcpy(stats[entry_count].dst_ip, dst_ip);
+//         stats[entry_count].src_port = src_port;
+//         stats[entry_count].dst_port = dst_port;
+//         strcpy(stats[entry_count].protocol, protocol);
+//         stats[entry_count].rx_bytes = 0;
+//         stats[entry_count].tx_bytes = 0;
+//         stats[entry_count].rx_packets = 0;
+//         stats[entry_count].tx_packets = 0;
+//         return entry_count++; // Return the index of the new entry
+//     }
     
-    return -1; // No space for new entries
-}
+//     return -1; // No space for new entries
+// }
 
 void got_packet(__attribute__((unused)) u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
     struct ip *ip_header = (struct ip*)(packet + 14); // Skip Ethernet header (14 bytes)
@@ -82,11 +82,44 @@ void got_packet(__attribute__((unused)) u_char *args, const struct pcap_pkthdr *
     }
     
     // Update stats for the connection
-    int index = find_or_add_connection(src_ip, src_port, dst_ip, dst_port, protocol);
-    if (index != -1) {
+    int type = 0;
+    int index = 0;
+    for (int i = 0; i < entry_count; i++) {
+        if (strcmp(stats[i].src_ip, src_ip) == 0 && stats[i].src_port == src_port &&
+            strcmp(stats[i].dst_ip, dst_ip) == 0 && stats[i].dst_port == dst_port) {
+            type = 1; // Return the index of the existing entry
+            index = i;
+        }
+    }
+    if (type == 0){
+        for (int i = 0; i < entry_count; i++) {
+            if (strcmp(stats[i].src_ip, dst_ip) == 0 && stats[i].src_port == dst_port &&
+                strcmp(stats[i].dst_ip, src_ip) == 0 && stats[i].dst_port == src_port) {
+                type = 2; // Return the index of the existing entry
+                index = i;
+            }
+    }
+    }
+    if (type == 1) {
         stats[index].rx_bytes += header->len;
         stats[index].rx_packets++;
         // You may need additional logic for counting Tx bytes and packets, depending on your capture strategy.
+    } else if (type == 2) {
+        stats[index].tx_bytes += header->len;
+        stats[index].tx_packets++;
+    } else {
+        if (entry_count < MAX_ENTRIES) {
+            strcpy(stats[entry_count].src_ip, src_ip);
+            strcpy(stats[entry_count].dst_ip, dst_ip);
+            stats[entry_count].src_port = src_port;
+            stats[entry_count].dst_port = dst_port;
+            strcpy(stats[entry_count].protocol, protocol);
+            stats[entry_count].rx_bytes = 0;
+            stats[entry_count].tx_bytes = 0;
+            stats[entry_count].rx_packets = 0;
+            stats[entry_count].tx_packets = 0;
+            entry_count++;
+        }
     }
 }
 
@@ -132,7 +165,7 @@ void display_stats(int sort_option) {
         if (stats[i].rx_packets > 1000){
             snprintf(rx_human_packet, sizeof(rx_human_packet), "%.1fk", stats[i].rx_packets/1000.0); 
         
-            snprintf(tx_human_packet, sizeof(tx_human_packet), "%.1fk", stats[i].tx_packets/1000);
+            snprintf(tx_human_packet, sizeof(tx_human_packet), "%.1fk", stats[i].tx_packets/1000.0);
         } else {
             snprintf(rx_human_packet, sizeof(rx_human_packet), "%d", stats[i].rx_packets); 
         
@@ -201,7 +234,7 @@ int main(int argc, char *argv[]) {
     refresh();
     
     while (1) {
-        pcap_loop(handle, 10, got_packet, NULL); // Process 10 packets at a time
+        pcap_loop(handle, 0, got_packet, NULL); // Process packets
         display_stats(sort_option);
         sleep(1); // Update every second
         for (int i = 0; i < entry_count; i++){
