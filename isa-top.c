@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define MAX_ENTRIES 100 // Maximum number of unique connections
 
@@ -26,32 +27,13 @@ typedef struct {
 
 ConnectionStats stats[MAX_ENTRIES];
 int entry_count = 0;
-
-// Function to find or add a connection
-// int find_or_add_connection(const char *src_ip, int src_port, const char *dst_ip, int dst_port, const char *protocol) {
-//     for (int i = 0; i < entry_count; i++) {
-//         if (strcmp(stats[i].src_ip, src_ip) == 0 && stats[i].src_port == src_port &&
-//             strcmp(stats[i].dst_ip, dst_ip) == 0 && stats[i].dst_port == dst_port) {
-//             return i; // Return the index of the existing entry
-//         }
-//     }
-    
-//     // If not found, add new entry
-//     if (entry_count < MAX_ENTRIES) {
-//         strcpy(stats[entry_count].src_ip, src_ip);
-//         strcpy(stats[entry_count].dst_ip, dst_ip);
-//         stats[entry_count].src_port = src_port;
-//         stats[entry_count].dst_port = dst_port;
-//         strcpy(stats[entry_count].protocol, protocol);
-//         stats[entry_count].rx_bytes = 0;
-//         stats[entry_count].tx_bytes = 0;
-//         stats[entry_count].rx_packets = 0;
-//         stats[entry_count].tx_packets = 0;
-//         return entry_count++; // Return the index of the new entry
-//     }
-    
-//     return -1; // No space for new entries
-// }
+int sort_option = 1;
+void display_stats(int sort_option);
+void update_display(__attribute__((unused)) int sig) {
+    display_stats(sort_option); // Aktualizuje štatistiky
+    entry_count = 0;
+    alarm(1); // Opäť nastaví alarm na 1 sekundu
+}
 
 void got_packet(__attribute__((unused)) u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
     struct ip *ip_header = (struct ip*)(packet + 14); // Skip Ethernet header (14 bytes)
@@ -125,8 +107,9 @@ void got_packet(__attribute__((unused)) u_char *args, const struct pcap_pkthdr *
 
 void display_stats(int sort_option) {
     clear();
-    mvprintw(0, 0, "%-30s %-30s %-10s %-20s %-20s", "Src IP:port", "Dst IP:port", "Proto", "Rx", "Tx");
-    mvprintw(1, 0, "%-70s %-10s %-10s %-10s %-10s","", "b/s", "p/s", "b/s", "p/s");
+    mvprintw(0, 0, "%-30s %-30s %-10s %-21s %-20s", "Src IP:port", "Dst IP:port", "Proto", "Rx", "Tx");
+    mvprintw(1, 0, "%-72s %-10s %-10s %-10s %-10s","", "b/s", "p/s", "b/s", "p/s");
+    mvprintw(2, 0, "%s","---------------------------------------------------------------------------------------------------------------");
     
     
     // Sort based on sort_option
@@ -146,41 +129,48 @@ void display_stats(int sort_option) {
 
     // Display the top 10 connections
     for (int i = 0; i < entry_count && i < 10; i++) {
-        char rx_human_packet[10], tx_human_packet[10], rx_human_byte[10], tx_human_byte[10];
-        if (stats[i].rx_bytes > 1000000){
+        char rx_human_packet[24], tx_human_packet[24], rx_human_byte[24], tx_human_byte[24];
+        if(stats[i].rx_bytes > 1000000000){
+            snprintf(rx_human_byte, sizeof(rx_human_byte), "%.1lfG", stats[i].rx_bytes/1000000000.0); 
+        } else if (stats[i].rx_bytes > 1000000){
             snprintf(rx_human_byte, sizeof(rx_human_byte), "%.1lfM", stats[i].rx_bytes/1000000.0); 
-        
-            snprintf(tx_human_byte, sizeof(tx_human_byte), "%.1lfM", stats[i].tx_bytes/1000000.0);
         } else if (stats[i].rx_bytes > 1000){
             snprintf(rx_human_byte, sizeof(rx_human_byte), "%.1lfk", stats[i].rx_bytes/1000.0); 
-        
-            snprintf(tx_human_byte, sizeof(tx_human_byte), "%.1lfk", stats[i].tx_bytes/1000.0);
         } else {
-            snprintf(rx_human_byte, sizeof(rx_human_byte), "%lld", stats[i].rx_bytes); 
-        
+            snprintf(rx_human_byte, sizeof(rx_human_byte), "%lld", stats[i].rx_bytes);         
+        }
+
+        if(stats[i].tx_bytes > 1000000000){
+            snprintf(tx_human_byte, sizeof(tx_human_byte), "%.1lfG", stats[i].tx_bytes/1000000000.0);
+        } else if (stats[i].tx_bytes > 1000000){        
+            snprintf(tx_human_byte, sizeof(tx_human_byte), "%.1lfM", stats[i].tx_bytes/1000000.0);
+        } else if (stats[i].tx_bytes > 1000){        
+            snprintf(tx_human_byte, sizeof(tx_human_byte), "%.1lfk", stats[i].tx_bytes/1000.0);
+        } else {        
             snprintf(tx_human_byte, sizeof(tx_human_byte), "%lld", stats[i].tx_bytes);
         
         }
 
         if (stats[i].rx_packets > 1000){
-            snprintf(rx_human_packet, sizeof(rx_human_packet), "%.1fk", stats[i].rx_packets/1000.0); 
-        
-            snprintf(tx_human_packet, sizeof(tx_human_packet), "%.1fk", stats[i].tx_packets/1000.0);
+            snprintf(rx_human_packet, sizeof(rx_human_packet), "%.1fk", stats[i].rx_packets/1000.0);
         } else {
-            snprintf(rx_human_packet, sizeof(rx_human_packet), "%d", stats[i].rx_packets); 
-        
-            snprintf(tx_human_packet, sizeof(tx_human_packet), "%d", stats[i].tx_packets);
+            snprintf(rx_human_packet, sizeof(rx_human_packet), "%d", stats[i].rx_packets);
         }
         
+        if (stats[i].tx_packets > 1000){
+            snprintf(tx_human_packet, sizeof(tx_human_packet), "%.1fk", stats[i].tx_packets/1000.0);
+        } else {
+            snprintf(tx_human_packet, sizeof(tx_human_packet), "%d", stats[i].tx_packets);
+        }
         char src_combined[INET_ADDRSTRLEN + 6]; // Sufficient size for IP:port
         char dst_combined[INET_ADDRSTRLEN + 6];
 
         // Combine IP address and port
-        snprintf(src_combined, sizeof(src_combined), "%s:%d", stats[i].src_ip, stats[i].src_port);
-        snprintf(dst_combined, sizeof(dst_combined), "%s:%d", stats[i].dst_ip, stats[i].dst_port);
+        snprintf(src_combined, sizeof(src_combined), "%.15s:%d", stats[i].src_ip, stats[i].src_port);
+        snprintf(dst_combined, sizeof(dst_combined), "%.15s:%d", stats[i].dst_ip, stats[i].dst_port);
 
         // Formatted output
-        mvprintw(i + 2, 0, "%-30s %-30s %-10s %-10s %-10s %-10s %-10s", src_combined, dst_combined, stats[i].protocol, rx_human_byte, rx_human_packet, tx_human_byte, tx_human_packet);
+        mvprintw(i + 3, 0, "%-30s %-30s %-10s %-10s %-10s %-10s %-10s", src_combined, dst_combined, stats[i].protocol, rx_human_byte, rx_human_packet, tx_human_byte, tx_human_packet);
     }
     
     refresh();
@@ -195,7 +185,6 @@ int main(int argc, char *argv[]) {
 
     // Parse command-line arguments
     char *interface = NULL;
-    int sort_option = 1; // Default sort by bytes
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
@@ -226,6 +215,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Could not install filter %s: %s\n", filter_exp, pcap_geterr(handle));
         return 2;
     }
+    signal(SIGALRM, update_display);
+    alarm(1); 
 
     // Initialize ncurses and display header
     initscr();
@@ -235,14 +226,7 @@ int main(int argc, char *argv[]) {
     
     while (1) {
         pcap_loop(handle, 0, got_packet, NULL); // Process packets
-        display_stats(sort_option);
-        sleep(1); // Update every second
-        for (int i = 0; i < entry_count; i++){
-            stats[i].rx_bytes = 0;
-            stats[i].tx_bytes = 0;
-            stats[i].rx_packets = 0;
-            stats[i].tx_packets = 0;
-        }
+       
     }
 
     pcap_freecode(&fp);
