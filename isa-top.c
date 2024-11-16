@@ -10,12 +10,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <netinet/ip6.h>
 
 #define MAX_ENTRIES 100 // Maximum number of unique connections
 
 typedef struct {
-    char src_ip[INET_ADDRSTRLEN];
-    char dst_ip[INET_ADDRSTRLEN];
+    char src_ip[INET6_ADDRSTRLEN];
+    char dst_ip[INET6_ADDRSTRLEN];
     int src_port;
     int dst_port;
     char protocol[10];
@@ -32,35 +33,90 @@ void display_stats(int sort_option);
 void update_display(__attribute__((unused)) int sig) {
     display_stats(sort_option); // Aktualizuje štatistiky
     entry_count = 0;
-    alarm(1); // Opäť nastaví alarm na 1 sekundu
+    alarm(10); // Opäť nastaví alarm na 1 sekundu
 }
 
-void got_packet(__attribute__((unused)) u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
-    struct ip *ip_header = (struct ip*)(packet + 14); // Skip Ethernet header (14 bytes)
-    
-    // Print IP addresses
-    char src_ip[INET_ADDRSTRLEN];
-    char dst_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(ip_header->ip_src), src_ip, INET_ADDRSTRLEN);
-    inet_ntop(AF_INET, &(ip_header->ip_dst), dst_ip, INET_ADDRSTRLEN);
-    
-    int src_port = 0, dst_port = 0;
-    char protocol[10];
+void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
+    static int link_header_len = -1;
 
-    if (ip_header->ip_p == IPPROTO_TCP) {
-        strcpy(protocol, "tcp");
-        struct tcphdr *tcp_header = (struct tcphdr*)(packet + 14 + (ip_header->ip_hl * 4));
-        src_port = ntohs(tcp_header->source);
-        dst_port = ntohs(tcp_header->dest);
-    } else if (ip_header->ip_p == IPPROTO_UDP) {
-        strcpy(protocol, "udp");
-        struct udphdr *udp_header = (struct udphdr*)(packet + 14 + (ip_header->ip_hl * 4));
-        src_port = ntohs(udp_header->source);
-        dst_port = ntohs(udp_header->dest);
-    } else if (ip_header->ip_p == IPPROTO_ICMP) {
-        strcpy(protocol, "icmp");
+    if (link_header_len == -1) {
+        // Determine the link-layer header length dynamically
+        pcap_t *pcap_handle = (pcap_t *)args;
+        int datalink_type = pcap_datalink(pcap_handle);
+
+        switch (datalink_type) {
+            case DLT_EN10MB: // Ethernet
+                link_header_len = 14;
+                break;
+            case DLT_RAW: // Raw IP
+                link_header_len = 0;
+                break;
+            case DLT_NULL: // Loopback
+                link_header_len = 4;
+                break;
+            case DLT_IEEE802_11: // Wi-Fi
+                link_header_len = 32; // Variable, needs additional parsing for 802.11 headers
+                break;
+            default:
+                fprintf(stderr, "Unsupported datalink type: %d\n", datalink_type);
+                return;
+        }
+    }
+
+    const u_char *network_header = packet + link_header_len;
+    uint16_t ethertype = ntohs(*(uint16_t *)(packet + 12));
+
+
+    char src_ip[INET6_ADDRSTRLEN] = {0};
+    char dst_ip[INET6_ADDRSTRLEN] = {0};
+    int src_port = 0, dst_port = 0;
+    char protocol[10] = {0};
+
+    if (ethertype == 0x0800) { // IPv4
+        struct ip *ip_header = (struct ip *)network_header;
+        inet_ntop(AF_INET, &(ip_header->ip_src), src_ip, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &(ip_header->ip_dst), dst_ip, INET_ADDRSTRLEN);
+
+        if (ip_header->ip_p == IPPROTO_TCP) {
+            strcpy(protocol, "tcp");
+            struct tcphdr *tcp_header = (struct tcphdr *)(network_header + (ip_header->ip_hl * 4));
+            src_port = ntohs(tcp_header->source);
+            dst_port = ntohs(tcp_header->dest);
+        } else if (ip_header->ip_p == IPPROTO_UDP) {
+            strcpy(protocol, "udp");
+            struct udphdr *udp_header = (struct udphdr *)(network_header + (ip_header->ip_hl * 4));
+            src_port = ntohs(udp_header->source);
+            dst_port = ntohs(udp_header->dest);
+        } else if (ip_header->ip_p == IPPROTO_ICMP) {
+            strcpy(protocol, "icmp");
+        } else {
+            return; // Ignore other protocols
+        }
+    } else if (ethertype == 0x86DD) { // IPv6
+        struct ip6_hdr *ip6_header = (struct ip6_hdr *)network_header;
+        inet_ntop(AF_INET6, &(ip6_header->ip6_src), src_ip, INET6_ADDRSTRLEN);
+        inet_ntop(AF_INET6, &(ip6_header->ip6_dst), dst_ip, INET6_ADDRSTRLEN);
+
+        uint8_t next_header = ip6_header->ip6_nxt;
+        const u_char *payload = network_header + sizeof(struct ip6_hdr);
+
+        if (next_header == IPPROTO_TCP) {
+            strcpy(protocol, "tcp");
+            struct tcphdr *tcp_header = (struct tcphdr *)payload;
+            src_port = ntohs(tcp_header->source);
+            dst_port = ntohs(tcp_header->dest);
+        } else if (next_header == IPPROTO_UDP) {
+            strcpy(protocol, "udp");
+            struct udphdr *udp_header = (struct udphdr *)payload;
+            src_port = ntohs(udp_header->source);
+            dst_port = ntohs(udp_header->dest);
+        } else if (next_header == IPPROTO_ICMPV6) {
+            strcpy(protocol, "icmpv6");
+        } else {
+            return; // Ignore other protocols
+        }
     } else {
-        return; // Ignore other protocols
+        return; // Ignore non-IP packets
     }
     
     // Update stats for the connection
@@ -107,9 +163,9 @@ void got_packet(__attribute__((unused)) u_char *args, const struct pcap_pkthdr *
 
 void display_stats(int sort_option) {
     clear();
-    mvprintw(0, 0, "%-30s %-30s %-10s %-21s %-20s", "Src IP:port", "Dst IP:port", "Proto", "Rx", "Tx");
-    mvprintw(1, 0, "%-72s %-10s %-10s %-10s %-10s","", "b/s", "p/s", "b/s", "p/s");
-    mvprintw(2, 0, "%s","---------------------------------------------------------------------------------------------------------------");
+    mvprintw(0, 0, "%-45s %-45s %-10s %-21s %-20s", "Src IP:port", "Dst IP:port", "Proto", "Rx", "Tx");
+    mvprintw(1, 0, "%-102s %-10s %-10s %-10s %-10s","", "b/s", "p/s", "b/s", "p/s");
+    mvprintw(2, 0, "%s","--------------------------------------------------------------------------------------------------------------------------------------------");
     
     
     // Sort based on sort_option
@@ -162,15 +218,15 @@ void display_stats(int sort_option) {
         } else {
             snprintf(tx_human_packet, sizeof(tx_human_packet), "%d", stats[i].tx_packets);
         }
-        char src_combined[INET_ADDRSTRLEN + 6]; // Sufficient size for IP:port
-        char dst_combined[INET_ADDRSTRLEN + 6];
+        char src_combined[INET6_ADDRSTRLEN + 6]; // Sufficient size for IP:port
+        char dst_combined[INET6_ADDRSTRLEN + 6];
 
         // Combine IP address and port
-        snprintf(src_combined, sizeof(src_combined), "%.15s:%d", stats[i].src_ip, stats[i].src_port);
-        snprintf(dst_combined, sizeof(dst_combined), "%.15s:%d", stats[i].dst_ip, stats[i].dst_port);
+        snprintf(src_combined, sizeof(src_combined), "%.39s:%d", stats[i].src_ip, stats[i].src_port);
+        snprintf(dst_combined, sizeof(dst_combined), "%.39s:%d", stats[i].dst_ip, stats[i].dst_port);
 
         // Formatted output
-        mvprintw(i + 3, 0, "%-30s %-30s %-10s %-10s %-10s %-10s %-10s", src_combined, dst_combined, stats[i].protocol, rx_human_byte, rx_human_packet, tx_human_byte, tx_human_packet);
+        mvprintw(i + 3, 0, "%-45s %-45s %-10s %-10s %-10s %-10s %-10s", src_combined, dst_combined, stats[i].protocol, rx_human_byte, rx_human_packet, tx_human_byte, tx_human_packet);
     }
     
     refresh();
@@ -180,7 +236,9 @@ int main(int argc, char *argv[]) {
     pcap_t *handle;
     char errbuf[PCAP_ERRBUF_SIZE];
     struct bpf_program fp;
-    char filter_exp[] = "ip proto \\icmp or ip proto \\tcp or ip proto \\udp";
+    //char filter_exp[] = "ip proto icmp or ip6 proto 58";
+    char filter_exp[] = "(udp or (ip or ip6) or (icmp or icmp6)) or (tcp or (ip or ip6) or (icmp or icmp6))";
+
     bpf_u_int32 net = 0;
 
     // Parse command-line arguments
@@ -218,13 +276,13 @@ int main(int argc, char *argv[]) {
     signal(SIGALRM, update_display);
     alarm(1); 
 
-    // Initialize ncurses and display header
+    //Initialize ncurses and display header
     initscr();
     noecho();
     cbreak();
     refresh();
     
-    pcap_loop(handle, 0, got_packet, NULL); // Process packets
+    pcap_loop(handle, 0, got_packet, (u_char *)handle); // Process packets
 
     pcap_freecode(&fp);
     pcap_close(handle);
