@@ -1,0 +1,20 @@
+.TH isa-top 1
+.SH NAME
+isa-top \- Application for obtaining network traffic statistics
+.SH SYNOPSIS
+.B isa-top
+\fB\-i\fR \fI<interface>\fR
+[\fB\-s\fR \fI<b|p>\fR]
+.SH DESCRIPTION
+.B isa-top
+Application that displays the current transfer speeds and packets/s for each communicating IP address. 
+This application is designed to work exclusively with Ethernet interfaces. Other interface types (e.g., Wi-Fi or loopback) are not supported and may result in undefined behavior.
+.SH OPTIONS
+.TP
+.BR \-i " "  \fI<interface>
+The Ethernet interface on which the application listens. Ensure that the specified interface supports Ethernet traffic.
+.TP
+.BR \-s " "\fI<b|p>
+Sort output by bytes/sec or packets/sec.
+.SH EXIT
+The program does not terminate automatically. To stop it, press \fBCTRL+C\fR.
